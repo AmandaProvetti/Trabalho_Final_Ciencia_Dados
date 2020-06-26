@@ -1,0 +1,221 @@
+---
+title: "Análise - Pesquisa Star Wars"
+author: "Amanda Provetti"
+output:
+  html_document:
+    df_print: paged
+  html_notebook: default
+  pdf_document: default
+---
+
+```{r}
+library(tidyverse)
+library(ggplot2)
+library(fastDummies)
+library(caret)
+library(corrplot)
+library(RColorBrewer)
+```
+
+O dataset foi construído baseado em uma entrevista realizada com 1186 pessoas sobre a saga Star Wars. O arquivo contém dados relacionados com questões como: "Você já viu o filme?", "Você se considera um fã?", além da relação de filmes, nota de cada filme, familiaridade com determinados personagens, sobre ser um fã da saga Star Trek e dados pessoais do entrevistado, como faixa etária, região onde mora, gênero, escolaridade e renda. Abaixo seguem algumas análises e testes feitos acerca deste dataset.
+https://github.com/fivethirtyeight/data/tree/master/star-wars-survey
+
+
+#### Tratamento do dataset para renomear as colunas de forma mais legível e remover a primeira linha que não contém informações relevantes. ####
+```{r}
+dataset = read.csv("StarWars.csv", sep = ",", na.strings=c("","NA"), skip = 1)
+cols_names <- c("id", "seen", "is_fan", "ep1", "ep2", "ep3", "ep4", "ep5", "ep6", "note_ep1", "note_ep2", "note_ep3", "note_ep4", "note_ep5", "note_ep6", "state_han", "state_luke", "state_leia", "state_anakin", "state_obi", "state_emperor", "state_darth", "state_lando", "state_boba", "state_c3po", "state_r2d2", "state_jar", "state_padime", "state_yoda", "shot_first", "familiar_ex_uni", "fan_exp_uni", "fan_star_trek", "gender", "age", "income", "education", "location")
+
+colnames(dataset) <- cols_names
+```
+
+<br />
+
+#### Análise da quantidade de pessoas que assistiram o filme baseado na idade. ####
+```{r}
+dataset_by_gender <- data.frame(
+  age = dataset$age, 
+  gender = dataset$gender,
+  fan_movie = dataset$is_fan)
+
+gender_age_df <- dataset_by_gender %>% filter(fan_movie == "Yes")
+
+gender_age_df %>%  ggplot(aes(x=age)) +
+    geom_bar(aes(fill = gender)) +
+    facet_wrap(~gender) +
+    theme_bw()
+```
+
+<br />
+
+#### Análise de média de votos por cada filme da saga ####
+```{r}
+dataset_movies <- dataset[,10:15]
+
+cols <- colnames(dataset_movies)
+
+df_movies_rank <- data.frame(matrix(nrow = 6, ncol =  2), stringsAsFactors = FALSE)
+
+colnames(df_movies_rank) <- c("movie", "mean")
+
+df_movies_rank$movie <- c("Star Wars: Episode I The Phantom Menace",
+                          "Star Wars: Episode II Attack of the Clones",
+                          "Star Wars: Episode III Revenge of the Sith",
+                          "Star Wars: Episode IV A New Hope",
+                          "Star Wars: Episode V The Empire Strikes Back",
+                          "Star Wars: Episode VI Return of the Jedi")
+
+
+for (i in 1:length(cols)) {
+  col <- cols[i]
+  df_movies_rank$mean[i] <- sum(as.integer(dataset_movies[[col]][2:nrow(dataset_movies)]), na.rm = TRUE) /     length(dataset_movies[[col]])
+}
+
+end_point = 0.5 + nrow(df_movies_rank) + nrow(df_movies_rank) - 1
+
+coul <- brewer.pal(5, "Set2") 
+
+barplot(df_movies_rank$mean, xlab="Filme", ylab="Média dos votos",col=coul,
+main="Média dos votos por filme",border="black", space = 1)+
+text(seq(1.5, end_point, by = 2), par("usr")[3]-0.25, 
+     srt = 90, adj = 0, xpd = TRUE,
+     labels = df_movies_rank$movie, cex = 0.85)
+
+```
+<br/>
+
+
+### Escolaridade dos entrevistados ###
+```{r}
+data_by_education <- dataset %>% group_by(education=dataset$education) %>% count()
+data_by_education <- na.omit(data_by_education)
+
+```
+
+
+```{r, fig.width=10, fig.height=7}
+coul <- brewer.pal(5, "Set2")
+
+
+barplot(data_by_education$n, col=coul)
+legend("top", 
+       legend = data_by_education$education, 
+       fill = coul)
+```
+
+
+<br />
+#### Quantidade de pessoas que viram o filme por região ####
+```{r}
+table_1 <- with(dataset, table(location, seen))
+table_1
+```
+
+<br />
+
+## Regressão logística baseada em ter visto filme ##
+```{r}
+binary <- dummy_cols(dataset, "seen", remove_selected_columns = TRUE)
+afirmatives <- binary %>% select(seen_Yes)
+
+n_df <- data.frame(seen=afirmatives$seen_Yes, gender=dataset$gender)
+cols <- c("seen")
+n_df[cols] <- lapply(n_df[cols], factor) 
+set.seed(100)
+```
+
+```{r}
+indices_treinamento <- createDataPartition(n_df$seen, p = 0.7, list = FALSE)
+dados_treinamento <-n_df[indices_treinamento,]
+dados_teste <- n_df[-indices_treinamento,]
+equation <- " seen ~ ."
+equation <- as.formula(equation)
+modelo_ML_logistic <- glm(equation, data = dados_treinamento, family = 'binomial')
+```
+
+#### Modelo baseado em idade e ter visto o filme e gênero ####
+```{r}
+summary(modelo_ML_logistic)
+```
+
+```{r}
+previsao_teste <- predict(modelo_ML_logistic, dados_teste, type="response")
+previsao_teste <- round(as.numeric(previsao_teste))
+previsao_teste <- as.factor(previsao_teste)
+```
+
+#### Matriz de confusão dos dados de teste baseado em ter visto o filme e a gênero ####
+```{r}
+dados_teste_fatores = as.factor(dados_teste$seen)
+previsao_teste_data <- data.frame(previsao_teste, dados_teste_fatores)
+confusionMatrix(data = previsao_teste, reference = dados_teste_fatores, positive = "1")
+```
+
+<br />
+
+#### Modelo baseado em idade e ter visto o filme e ser fã de Star Trek ####
+```{r}
+binary_2 <- dummy_cols(dataset, "seen", remove_selected_columns = TRUE)
+afirmatives_2 <- binary %>% select(seen_Yes)
+
+n_df_2 <- data.frame(seen=afirmatives_2$seen_Yes, star_trek=dataset$fan_star_trek)
+cols <- c("seen")
+n_df_2[cols] <- lapply(n_df_2[cols], factor) 
+set.seed(100)
+```
+
+```{r}
+indices_treinamento_2 <- createDataPartition(n_df_2$seen, p = 0.7, list = FALSE)
+dados_treinamento_2 <-n_df_2[indices_treinamento_2,]
+dados_teste_2 <- n_df_2[-indices_treinamento_2,]
+
+modelo_ML_logistic_2 <- glm(seen ~ star_trek, data = dados_treinamento_2, family = 'binomial')
+summary(modelo_ML_logistic_2)
+```
+
+#### Matriz de confusão baseado em ter visto o filme e ser fã de Star Trek ####
+```{r}
+previsao_teste_2 <- predict(modelo_ML_logistic_2, dados_teste_2, type="response")
+previsao_teste_2 <- round(as.numeric(previsao_teste_2))
+previsao_teste_2 <- as.factor(previsao_teste_2)
+
+dados_teste_fatores_2 = as.factor(dados_teste_2$seen)
+previsao_teste_data_2 <- data.frame(previsao_teste_2, dados_teste_fatores_2)
+confusionMatrix(data = previsao_teste_2, reference = dados_teste_fatores_2, positive = "1")
+```
+
+
+## Testes baseados em Fãs de Star wars ##
+```{r}
+binary_3 <- dummy_cols(dataset, "is_fan", remove_selected_columns = TRUE)
+afirmatives_3 <- binary_3 %>% select(is_fan_Yes)
+
+n_df_3 <- data.frame(is_fan=afirmatives_3$is_fan_Yes, star_trek=dataset$fan_star_trek, age=dataset$age, gender=dataset$gender)
+cols <- c("is_fan")
+n_df_3[cols] <- lapply(n_df_3[cols], factor) 
+set.seed(100)
+```
+
+#### Modelo baseado em ser fã de Start wars, gênero, ser fã de Star Trek e idade ####
+```{r}
+indices_treinamento_3 <- createDataPartition(n_df_3$is_fan, p = 0.7, list = FALSE)
+dados_treinamento_3 <-n_df_3[indices_treinamento_3,]
+dados_teste_3 <- n_df_3[-indices_treinamento_3,]
+
+modelo_ML_logistic_3 <- glm(is_fan ~ gender + star_trek + age, data = dados_treinamento_3, family = 'binomial')
+summary(modelo_ML_logistic_3)
+```
+
+
+#### Matriz de confusão em ser fã de Start wars, gênero, ser fã de Star Trek e idade ####
+```{r}
+previsao_teste_3 <- predict(modelo_ML_logistic_3, dados_teste_3, type="response")
+previsao_teste_3 <- round(as.numeric(previsao_teste_3))
+previsao_teste_3 <- as.factor(previsao_teste_3)
+
+dados_teste_fatores_3 = as.factor(dados_teste_3$is_fan)
+previsao_teste_data_3 <- data.frame(previsao_teste_3, dados_teste_fatores_3)
+confusionMatrix(data = previsao_teste_3, reference = dados_teste_fatores_3, positive = "1")
+```
+
+
